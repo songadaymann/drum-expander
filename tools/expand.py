@@ -16,6 +16,10 @@ What this changes on top of drum2midi:
     hits, through the General MIDI curve (gain dB = 40*log10(vel/127)), so a hit 10 dB down
     lands near 71 instead of ~120. A kick or snare more than 30 dB under its drum's loudest
     hits is bleed, not a hit, and is dropped.
+  * Cowbell: neither model has a class for it, so the separator leaves it out of every stem
+    and the transcriber calls a few of its hits toms. We look in what's left (the mix minus
+    all six stems) for repeating hits with one clear pitch and no low end, write them as GM
+    cowbell (56), and drop the toms that were really the cowbell.
 """
 
 import argparse
@@ -42,12 +46,14 @@ NOTE_LEN = 0.06
 FALSE_HIT_DB = -30.0      # this far under the drum's loudest hits = bleed
 FALSE_HIT_LANES = {"KICK", "SNARE"}  # the only stems clean enough to overrule the transcriber
 OPEN_RATIO = 0.30         # tail/attack RMS above this (about -10.5 dB) = still ringing
+COWBELL = 56
 LANE_STEM = {"KICK": "kick", "SNARE": "snare", "HATS": "hihat", "TOMS": "toms",
              "RIDE": "ride", "CRASH": "cymbals"}
 LANE_OF = {35: "KICK", 36: "KICK", 37: "SNARE", 38: "SNARE", 39: "SNARE", 40: "SNARE",
            42: "HATS", 44: "HATS", 46: "HATS", 49: "CRASH", 52: "CRASH", 55: "CRASH",
            57: "CRASH", 51: "RIDE", 53: "RIDE", 59: "RIDE",
-           41: "TOMS", 43: "TOMS", 45: "TOMS", 47: "TOMS", 48: "TOMS", 50: "TOMS"}
+           41: "TOMS", 43: "TOMS", 45: "TOMS", 47: "TOMS", 48: "TOMS", 50: "TOMS",
+           COWBELL: "COWBELL"}
 
 
 # --- downbeat fix: ADTOF's peak picker, with silence before the first frame ---------------
@@ -103,6 +109,57 @@ def hat_is_open(stem, t, next_hat, loudest_attack):
     return tail > OPEN_RATIO * attack and tail > 0.15 * loudest_attack
 
 
+def spectrum_features(sig, t, win=0.08):
+    """Share of energy below 300 Hz, the strongest pitch between 300 Hz and 2 kHz, and how
+    noise-like that band is (spectral flatness: near 1 for noise, low for a clear pitch)."""
+    seg = sig[max(0, int(t * SR)):int((t + win) * SR)]
+    if seg.size < 1024:
+        return 1.0, 0.0, 1.0
+    spec = np.abs(np.fft.rfft(seg * np.hanning(seg.size), n=8192))
+    freqs = np.fft.rfftfreq(8192, 1 / SR)
+    energy = spec ** 2
+    low = energy[freqs < 300].sum() / (energy.sum() + 1e-12)
+    band = (freqs > 300) & (freqs < 2000)
+    peak = float(freqs[band][np.argmax(spec[band])])
+    flat = np.exp(np.mean(np.log(spec[band] + 1e-9))) / (np.mean(spec[band]) + 1e-12)
+    return low, peak, flat
+
+
+def is_bell(low, peak, flat):
+    return low < 0.1 and flat < 0.6 and 400 <= peak <= 1500
+
+
+def attack_time(sig, t):
+    """Backtracked onsets sit in the quiet before a hit; move to where it reaches 25% of its
+    peak."""
+    a = max(0, int((t - 0.01) * SR))
+    env = np.abs(sig[a:int((t + 0.04) * SR)])
+    return (a + int(np.argmax(env >= 0.25 * env.max()))) / SR if env.size else t
+
+
+def find_cowbell(resid):
+    """Times and pitch of a cowbell in the leftover audio, or ([], None). Tonal hits are
+    grouped by pitch and only the biggest group counts, since stray blips don't repeat."""
+    onsets = librosa.onset.onset_detect(y=resid, sr=SR, hop_length=256, backtrack=True,
+                                        units="time", delta=0.1)
+    bells = []
+    for t in onsets:
+        t = attack_time(resid, t)
+        low, peak, flat = spectrum_features(resid, t)
+        if is_bell(low, peak, flat):
+            bells.append((t, peak, peak_db(resid, t)))
+    if not bells:
+        return [], None
+    pitch = max((b[1] for b in bells),
+                key=lambda f: sum(abs(b[1] - f) <= 0.04 * f for b in bells))
+    hits = [b for b in bells if abs(b[1] - pitch) <= 0.04 * pitch]
+    loudest = max(b[2] for b in hits)
+    hits = [b for b in hits if b[2] > loudest - 25]
+    if len(hits) < 2:
+        return [], None
+    return [b[0] for b in hits], pitch
+
+
 def run_drum2midi(loop: Path, raw_mid: Path, stems_dir: Path, tempo, log: Path) -> int:
     """drum2midi's own CLI, in this process so the peak-picker fix above applies."""
     argv = ["drum2midi.py", str(loop), "-o", str(raw_mid), "--keep-stems", str(stems_dir),
@@ -146,6 +203,26 @@ def main() -> int:
             stems[lane] = mono(sf.read(str(f))[0])
     mix = librosa.load(str(loop), sr=SR, mono=True)[0]
     mix_rms = rms(mix, 0, len(mix) / SR)
+
+    # Cowbell: in the leftover audio; toms that are really the bell are moved over.
+    n = min([len(mix)] + [len(s) for s in stems.values()])
+    resid = mix[:n] - sum(s[:n] for s in stems.values())
+    bell_times, bell_pitch = find_cowbell(resid)
+    toms_were_bell = 0
+    if bell_times:
+        tom_stem = stems.get("TOMS")
+        kept = []
+        for t, p, v in events:
+            if LANE_OF.get(p) == "TOMS" and tom_stem is not None:
+                low, peak, flat = spectrum_features(tom_stem, t)
+                if is_bell(low, peak, flat) and abs(peak - bell_pitch) <= 0.05 * bell_pitch:
+                    toms_were_bell += 1
+                    if not any(abs(t - b) < 0.03 for b in bell_times):
+                        bell_times.append(t)
+                    continue
+            kept.append((t, p, v))
+        events = sorted(kept + [(t, COWBELL, 100) for t in bell_times])
+        stems["COWBELL"] = resid
 
     # Hats: re-decide open (46) vs closed (42); pedal (44) stays as drum2midi called it.
     hats_before = {42: 0, 46: 0}
@@ -198,6 +275,8 @@ def main() -> int:
         "hats_drum2midi": {"closed": hats_before[42], "open": hats_before[46]},
         "hats_now": {"closed": hats_after[42], "open": hats_after[46]},
         "dropped_as_bleed": dropped,
+        "cowbell": {"hits": len(bell_times), "pitch_hz": round(bell_pitch) if bell_pitch else None,
+                    "toms_that_were_cowbell": toms_were_bell},
         "velocity_source": source,
     }
     (out / "fixes.json").write_text(json.dumps(report, indent=2))

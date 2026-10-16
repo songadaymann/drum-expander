@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
 LOOPS = Path(os.environ.get("LOOPS_DIR", ROOT / "private-assets" / "loops"))
 SOUNDFONT = ROOT / "drum2midi" / "tools" / "MuseScore_General.sf3"
-LANES = ["KICK", "SNARE", "HATS", "CRASH", "RIDE", "TOMS"]
+LANES = ["KICK", "SNARE", "HATS", "CRASH", "RIDE", "TOMS", "COWBELL"]
 PACKS = {
     "SO_HU2": "Breaktapes Vol 2 (Sean Hutchinson)",
     "OLIVER": "Oliver Power Tools Decades: 80's",
@@ -45,6 +45,7 @@ NOTE_INFO = {
     51: ("RIDE", ""), 53: ("RIDE", "bell"), 59: ("RIDE", ""),
     41: ("TOMS", "lo"), 43: ("TOMS", "lo"), 45: ("TOMS", "mid"),
     47: ("TOMS", "mid"), 48: ("TOMS", "hi"), 50: ("TOMS", "hi"),
+    56: ("COWBELL", ""),
 }
 
 

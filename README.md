@@ -41,7 +41,10 @@ The report lets you play each loop with any combination of its MIDI drums on top
    - **The first beat.** ADTOF's peak picker compared the first frame with copies of itself, so a hit at 0 ms never registered. We treat the time before the loop as silence. Padding the audio instead changed what the model heard elsewhere in the loop.
    - **Open vs closed hats.** drum2midi called a hat open if it was still ringing 80–250 ms later. At 120–130 BPM the next hat lands inside that window. We stop listening just before the next hat.
    - **Velocity.** Each hit's velocity comes from its peak in its own stem, relative to that drum's loudest hits, through the General MIDI curve (gain in dB = 40·log10(velocity/127)). A kick or snare more than 30 dB under its drum's loudest hits is treated as bleed and dropped.
-3. **`tools/split_midi.py`** writes one MIDI file per drum.
+   - **Cowbell.** Neither model has a cowbell class, so the separator leaves it out of every stem and the transcriber calls some of its hits toms. We look in what's left after subtracting all six stems from the mix for repeating hits with one clear pitch (400–1500 Hz) and no low end. We write them as cowbell (GM note 56) and drop the toms that were really the bell.
+3. **`tools/split_midi.py`** writes one MIDI file per drum, plus `COWBELL.mid` when there is one.
+
+Claps are still filed as snare. When a clap is layered on the snare, nothing in the attack separates the two: acoustic snares are just as spiky. A general sound-event model (PANNs, trained on AudioSet) didn't pick up claps or cowbell inside a loop either.
 
 ## Model licenses: read before reusing
 
@@ -55,7 +58,7 @@ That's fine for trying this out. Those models can't ship in an open or commercia
 ## Roadmap
 
 - A plugin (VST3/AU) that takes a dropped file or captures the loop as the DAW plays, and gives you one drag handle per drum.
-- Our own small transcription model, trained only on openly licensed data.
+- Our own small transcription model, trained only on openly licensed data. It would cover claps, tambourine, shaker and other percussion as well as the kit, trained on synthetic loops where those parts are layered on purpose.
 
 ## License
 

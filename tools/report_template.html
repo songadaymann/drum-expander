@@ -8,19 +8,19 @@
 :root {
   --bg: #f6f5f2; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
   --grid: #ebe9e4; --bar: #cfccc4; --wave: #c9c6bd; --accent: #1d1d1b; --accent-text: #ffffff;
-  --kick: #d9480f; --snare: #e09f00; --hats: #0c8599; --crash: #3b5bdb; --ride: #9c36b5; --toms: #2b8a3e; --other: #868e96;
+  --kick: #d9480f; --snare: #e09f00; --hats: #0c8599; --crash: #3b5bdb; --ride: #9c36b5; --toms: #2b8a3e; --cowbell: #c2255c; --other: #868e96;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161615; --surface: #1f1f1d; --text: #ecebe7; --muted: #9d9b95; --line: #33322f;
     --grid: #2a2927; --bar: #45443f; --wave: #4a4943; --accent: #ecebe7; --accent-text: #161615;
-    --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c;
+    --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c; --cowbell: #f783ac;
   }
 }
 :root[data-theme="dark"] {
   --bg: #161615; --surface: #1f1f1d; --text: #ecebe7; --muted: #9d9b95; --line: #33322f;
   --grid: #2a2927; --bar: #45443f; --wave: #4a4943; --accent: #ecebe7; --accent-text: #161615;
-  --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c;
+  --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c; --cowbell: #f783ac;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
@@ -69,11 +69,13 @@ footer { color: var(--muted); font-size: 13px; margin-top: 28px; }
 </main>
 <script>
 const DATA = /*__DATA__*/null;
-const LANES = ["KICK", "SNARE", "HATS", "CRASH", "RIDE", "TOMS"];
-const COLORS = { KICK: "--kick", SNARE: "--snare", HATS: "--hats", CRASH: "--crash", RIDE: "--ride", TOMS: "--toms", OTHER: "--other" };
+const BASE_LANES = ["KICK", "SNARE", "HATS", "CRASH", "RIDE", "TOMS"];
+const EXTRA_LANES = ["COWBELL"];  // shown only when a loop has them
+const lanesFor = loop => BASE_LANES.concat(EXTRA_LANES.filter(l => (loop.counts || {})[l]));
+const COLORS = { KICK: "--kick", SNARE: "--snare", HATS: "--hats", CRASH: "--crash", RIDE: "--ride", TOMS: "--toms", COWBELL: "--cowbell", OTHER: "--other" };
 const KEYWORDS = [["kick", "kick"], ["snare", "snare"], ["hihat", "hi-hat"], ["hats", "hi-hat"], ["ride", "ride"],
   ["crash", "crash"], ["tom", "toms"], ["clap", "claps"], ["bell", "bell"], ["xstick", "cross-stick"],
-  ["tambourine", "tambourine"], ["percussion", "percussion"], ["fill", "fill"]];
+  ["cowbell", "cowbell"], ["tambourine", "tambourine"], ["percussion", "percussion"], ["fill", "fill"]];
 
 let ctx = null;
 let playing = null;
@@ -124,6 +126,7 @@ function svgEl(tag, attrs = {}) {
 }
 
 function drawLanes(loop) {
+  const LANES = lanesFor(loop);
   const W = 940, LABEL = 92, WAVE = 46, LANE = 24, GAP = 4;
   const H = WAVE + GAP + LANES.length * LANE + 4;
   const plotW = W - LABEL - 4;
@@ -181,6 +184,7 @@ function drawLanes(loop) {
 }
 
 function buildCard(loop) {
+  const LANES = lanesFor(loop);
   const meta = [loop.pack, loop.tempo ? `${loop.tempo} BPM` : null,
     loop.duration ? `${loop.duration.toFixed(1)} s` : null,
     loop.seconds != null ? `converted in ${loop.seconds} s` : null].filter(Boolean).join(" · ");

@@ -1,4 +1,5 @@
-"""Split a General MIDI drum file into one .mid per drum: KICK, SNARE, HATS, CRASH, RIDE, TOMS.
+"""Split a General MIDI drum file into one .mid per drum: KICK, SNARE, HATS, CRASH, RIDE, TOMS,
+plus COWBELL when there is one.
 
     python split_midi.py combined.mid out_dir/
 
@@ -19,6 +20,7 @@ GROUPS = {
     "CRASH": {49, 52, 55, 57},
     "RIDE": {51, 53, 59},
     "TOMS": {41, 43, 45, 47, 48, 50},
+    "COWBELL": {56},
 }
 
 
