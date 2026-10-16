@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drum Loop Test</title>
+<style>
+:root {
+  --bg: #f6f5f2; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6a66; --line: #e3e1db;
+  --grid: #ebe9e4; --bar: #cfccc4; --wave: #c9c6bd; --accent: #1d1d1b; --accent-text: #ffffff;
+  --kick: #d9480f; --snare: #e09f00; --hats: #0c8599; --crash: #3b5bdb; --ride: #9c36b5; --toms: #2b8a3e; --other: #868e96;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --surface: #1f1f1d; --text: #ecebe7; --muted: #9d9b95; --line: #33322f;
+    --grid: #2a2927; --bar: #45443f; --wave: #4a4943; --accent: #ecebe7; --accent-text: #161615;
+    --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161615; --surface: #1f1f1d; --text: #ecebe7; --muted: #9d9b95; --line: #33322f;
+  --grid: #2a2927; --bar: #45443f; --wave: #4a4943; --accent: #ecebe7; --accent-text: #161615;
+  --kick: #ff7a45; --snare: #ffc53d; --hats: #36cfc9; --crash: #748ffc; --ride: #da77f2; --toms: #69db7c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.lede { color: var(--muted); margin: 0 0 24px; max-width: 70ch; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px 18px 14px; margin-bottom: 18px; }
+.head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; }
+.head h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 10px; }
+button { font: inherit; font-size: 13px; cursor: pointer; border-radius: 999px; padding: 5px 12px;
+  border: 1px solid var(--line); background: transparent; color: var(--text); }
+button.play { background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+  min-width: 74px; font-weight: 600; }
+button.chip { display: inline-flex; align-items: center; gap: 6px; }
+button.chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+button.chip[aria-pressed="false"] { opacity: 0.4; }
+button.chip[aria-pressed="false"] .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--c); }
+button:disabled { opacity: 0.25; cursor: default; }
+.sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.mix { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.mix input { width: 110px; accent-color: var(--accent); }
+svg { display: block; width: 100%; height: auto; }
+svg text { font: 11px -apple-system, system-ui, sans-serif; fill: var(--muted); }
+svg .count { font-weight: 600; fill: var(--text); }
+.failed { color: var(--kick); }
+footer { color: var(--muted); font-size: 13px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Drum loop → 6 MIDI tracks</h1>
+  <p class="lede">drum2midi run on loops from your Splice library. Press play, then turn drums on and off
+    to check each one against the original. The mix slider fades between the loop and the MIDI
+    (rendered through a stock General MIDI kit, so judge timing and hits, not tone).
+    Taller, darker marks are louder hits: velocity now follows each hit's actual loudness.
+    In HATS, outlined marks are open hats. In TOMS, high, mid and low toms sit at the top,
+    middle and bottom of the lane.</p>
+  <div id="loops"></div>
+  <footer>Source loops are Splice samples, so keep this page local. MIDI files for each loop are
+    in <code>results/&lt;loop&gt;/midi/</code>.</footer>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const LANES = ["KICK", "SNARE", "HATS", "CRASH", "RIDE", "TOMS"];
+const COLORS = { KICK: "--kick", SNARE: "--snare", HATS: "--hats", CRASH: "--crash", RIDE: "--ride", TOMS: "--toms", OTHER: "--other" };
+const KEYWORDS = [["kick", "kick"], ["snare", "snare"], ["hihat", "hi-hat"], ["hats", "hi-hat"], ["ride", "ride"],
+  ["crash", "crash"], ["tom", "toms"], ["clap", "claps"], ["bell", "bell"], ["xstick", "cross-stick"],
+  ["tambourine", "tambourine"], ["percussion", "percussion"], ["fill", "fill"]];
+
+let ctx = null;
+let playing = null;
+
+function audioCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  return ctx;
+}
+
+async function decode(b64, dur) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const buf = await audioCtx().decodeAudioData(bytes.buffer);
+  // Trim or pad to the loop length so every layer loops in step.
+  const len = Math.round(dur * buf.sampleRate);
+  const fit = audioCtx().createBuffer(buf.numberOfChannels, len, buf.sampleRate);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    fit.getChannelData(c).set(buf.getChannelData(c).subarray(0, len));
+  }
+  return fit;
+}
+
+function prettyName(name) {
+  return name.replace(/_/g, " ");
+}
+
+function mentions(name) {
+  const lower = name.toLowerCase();
+  const found = [];
+  for (const [key, label] of KEYWORDS) if (lower.includes(key) && !found.includes(label)) found.push(label);
+  return found;
+}
+
+function el(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "style") node.style.cssText = v; else if (k.startsWith("on")) node[k] = v; else node.setAttribute(k, v);
+  }
+  for (const kid of kids) node.append(kid);
+  return node;
+}
+
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+
+function drawLanes(loop) {
+  const W = 940, LABEL = 92, WAVE = 46, LANE = 24, GAP = 4;
+  const H = WAVE + GAP + LANES.length * LANE + 4;
+  const plotW = W - LABEL - 4;
+  const x = t => LABEL + (t / loop.duration) * plotW;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": `Detected drum hits for ${loop.name}` });
+
+  // Beat grid from the loop tempo; every 4th line is a bar.
+  if (loop.tempo) {
+    const beat = 60 / Number(loop.tempo);
+    for (let i = 0, t = 0; t <= loop.duration + 1e-6; i++, t = i * beat) {
+      svg.append(svgEl("line", { x1: x(t), x2: x(t), y1: 0, y2: H,
+        stroke: `var(${i % 4 === 0 ? "--bar" : "--grid"})`, "stroke-width": 1 }));
+    }
+  }
+
+  // Waveform of the original.
+  const mid = WAVE / 2, n = loop.peaks.length;
+  let d = "";
+  loop.peaks.forEach((p, i) => {
+    const px = LABEL + (i / n) * plotW;
+    const h = Math.max(0.5, p * (WAVE / 2 - 2));
+    d += `M${px.toFixed(1)} ${(mid - h).toFixed(1)}V${(mid + h).toFixed(1)}`;
+  });
+  svg.append(svgEl("path", { d, stroke: "var(--wave)", "stroke-width": plotW / n * 0.8 }));
+  const wl = svgEl("text", { x: 0, y: mid + 4 }); wl.textContent = "original"; svg.append(wl);
+
+  LANES.forEach((lane, li) => {
+    const y = WAVE + GAP + li * LANE;
+    svg.append(svgEl("rect", { x: LABEL, y: y + 2, width: plotW, height: LANE - 4, rx: 3,
+      fill: "var(--grid)", opacity: 0.45 }));
+    const label = svgEl("text", { x: 0, y: y + LANE / 2 + 4 }); label.textContent = lane; svg.append(label);
+    const c = svgEl("text", { x: LABEL - 8, y: y + LANE / 2 + 4, "text-anchor": "end", class: "count" });
+    c.textContent = loop.counts[lane] || 0; svg.append(c);
+    for (const h of loop.hits.filter(h => h.lane === lane)) {
+      const color = `var(${COLORS[lane]})`, opacity = (0.3 + 0.7 * h.vel / 127).toFixed(2);
+      let top = y + 3, height = LANE - 6;
+      // Toms stack high / mid / low inside the lane; everywhere else height follows velocity.
+      if (lane === "TOMS") {
+        const row = { hi: 0, mid: 1, lo: 2 }[h.label] ?? 1;
+        height = (LANE - 6) / 3; top = y + 3 + row * height;
+      } else {
+        height = (LANE - 6) * (0.25 + 0.75 * h.vel / 127); top = y + LANE - 3 - height;
+      }
+      const attrs = { x: x(h.t) - 2, y: top, width: 5, height, rx: 1.5, opacity };
+      if (h.label === "open") Object.assign(attrs, { fill: "none", stroke: color, "stroke-width": 1.6, width: 7 });
+      else attrs.fill = color;
+      svg.append(svgEl("rect", attrs));
+    }
+  });
+  const other = loop.hits.filter(h => h.lane === "OTHER");
+  const head = svgEl("line", { x1: LABEL, x2: LABEL, y1: 0, y2: H, stroke: "var(--text)", "stroke-width": 1.5, opacity: 0 });
+  svg.append(head);
+  return { svg, head, x, other };
+}
+
+function buildCard(loop) {
+  const meta = [loop.pack, loop.tempo ? `${loop.tempo} BPM` : null,
+    loop.duration ? `${loop.duration.toFixed(1)} s` : null,
+    loop.seconds != null ? `converted in ${loop.seconds} s` : null].filter(Boolean).join(" · ");
+  const card = el("section", { class: "card" },
+    el("div", { class: "head" }, el("h2", {}, prettyName(loop.name)), el("span", { class: "meta" }, meta)));
+  const said = mentions(loop.name);
+  if (said.length) card.append(el("div", { class: "hint" }, `Filename mentions: ${said.join(", ")}`));
+  if (loop.fixes) {
+    const f = loop.fixes, bits = [];
+    if (f.first_hit_ms != null) bits.push(`first hit at ${f.first_hit_ms} ms`);
+    if (f.hats_drum2midi.open !== f.hats_now.open) bits.push(`open hats ${f.hats_drum2midi.open} → ${f.hats_now.open}`);
+    const drops = f.dropped_as_bleed.length;
+    if (drops) bits.push(`dropped ${drops} bleed ${drops === 1 ? "hit" : "hits"} (${f.dropped_as_bleed.map(d => d.lane.toLowerCase() + " " + d.t + "s").join(", ")})`);
+    card.append(el("div", { class: "hint" }, `Fixes: ${bits.join(" · ")}`));
+  }
+  if (loop.status !== "ok") {
+    card.append(el("p", { class: "failed" }, `Conversion ${loop.status}. See results/${loop.name}/log.txt`));
+    return card;
+  }
+
+  const state = { on: { ORIG: true }, mix: 50, sources: [], gains: {}, buffers: null, t0: 0, raf: 0 };
+  LANES.forEach(l => state.on[l] = true);
+
+  const playBtn = el("button", { class: "play", type: "button" }, "▶ Play");
+  const controls = el("div", { class: "controls" }, playBtn);
+  const chip = (key, label, color, enabled) => {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": "true", style: `--c: var(${color})` },
+      el("span", { class: "dot" }), label);
+    if (!enabled) { b.disabled = true; b.setAttribute("aria-pressed", "false"); }
+    b.onclick = () => {
+      state.on[key] = !state.on[key];
+      b.setAttribute("aria-pressed", String(state.on[key]));
+      applyGains();
+    };
+    return b;
+  };
+  controls.append(chip("ORIG", "Original", "--text", true), el("span", { class: "sep" }));
+  LANES.forEach(l => controls.append(chip(l, l, COLORS[l], Boolean(loop.lanes[l]))));
+  const slider = el("input", { type: "range", min: 0, max: 100, value: 50, "aria-label": "Mix between original and MIDI" });
+  slider.oninput = () => { state.mix = Number(slider.value); applyGains(); };
+  controls.append(el("span", { class: "sep" }), el("label", { class: "mix" }, "loop", slider, "MIDI"));
+  card.append(controls);
+
+  const lanes = drawLanes(loop);
+  card.append(lanes.svg);
+  if (lanes.other.length) card.append(el("div", { class: "hint" }, `${lanes.other.length} hits on other GM notes not shown`));
+
+  function levels() {
+    return { orig: Math.min(1, (100 - state.mix) / 50), midi: Math.min(1, state.mix / 50) };
+  }
+  function applyGains() {
+    if (!state.buffers) return;
+    const lv = levels(), now = audioCtx().currentTime;
+    for (const [key, g] of Object.entries(state.gains)) {
+      const target = key === "ORIG" ? (state.on.ORIG ? lv.orig : 0) : (state.on[key] ? lv.midi : 0);
+      g.gain.setTargetAtTime(target, now, 0.015);
+    }
+  }
+  function stop() {
+    state.sources.forEach(s => { try { s.stop(); } catch (e) {} });
+    state.sources = [];
+    cancelAnimationFrame(state.raf);
+    lanes.head.setAttribute("opacity", 0);
+    playBtn.textContent = "▶ Play";
+    if (playing === stop) playing = null;
+  }
+  async function start() {
+    if (playing) playing();
+    const ac = audioCtx();
+    await ac.resume();
+    playBtn.textContent = "Loading…";
+    if (!state.buffers) {
+      state.buffers = { ORIG: await decode(loop.original, loop.duration) };
+      for (const [lane, b64] of Object.entries(loop.lanes)) state.buffers[lane] = await decode(b64, loop.duration);
+      for (const key of Object.keys(state.buffers)) {
+        state.gains[key] = ac.createGain();
+        state.gains[key].connect(ac.destination);
+      }
+    }
+    applyGains();
+    const when = ac.currentTime + 0.06;
+    for (const [key, buf] of Object.entries(state.buffers)) {
+      const src = ac.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      src.connect(state.gains[key]);
+      src.start(when);
+      state.sources.push(src);
+    }
+    state.t0 = when;
+    playing = stop;
+    playBtn.textContent = "■ Stop";
+    lanes.head.setAttribute("opacity", 0.8);
+    const tick = () => {
+      const t = Math.max(0, ac.currentTime - state.t0) % loop.duration;
+      const px = lanes.x(t);
+      lanes.head.setAttribute("x1", px); lanes.head.setAttribute("x2", px);
+      state.raf = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  playBtn.onclick = () => (state.sources.length ? stop() : start());
+  return card;
+}
+
+const root = document.getElementById("loops");
+(DATA || []).forEach(loop => root.append(buildCard(loop)));
+</script>
+</body>
+</html>
